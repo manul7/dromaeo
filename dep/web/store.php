@@ -24,60 +24,86 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 */
+$db_cfg = parse_ini_file("db.ini", true);
 
-	$server = 'mysql.dromaeo.com';
-	$user = 'dromaeo';
-	$pass = 'dromaeo';
-
-	require('JSON.php');
-
-	$json = new Services_JSON();
-        $sql = mysql_connect( $server, $user, $pass );
-
-        mysql_select_db( 'dromaeo' );
-
-	$id = str_replace(';', "", $_REQUEST['id']);
-
-	if ( $id ) {
-		$sets = array();
-		$ids = split(",", $id);
-
-		foreach ($ids as $i) {
-			$query = mysql_query( "SELECT * FROM runs WHERE id=$i;" );
-			$data = mysql_fetch_assoc($query);
+if (array_key_exists("sqlite", $db_cfg)) {
+	$db_type = "sqlite";
+	$db_path = $db_cfg["sqlite"]["path"];
+}
+elseif (array_key_exists("mysql", $db_cfg)) {
+	$db_type = "mysql";
+	$server = $db_cfg["mysql"]["server"];
+	$user = $db_cfg["mysql"]["user"];
+	$pass = $db_cfg["mysql"]["pass"];
+	$database = $db_cfg["mysql"]["database"];
+}
 	
-			$query = mysql_query( "SELECT * FROM results WHERE run_id=$i;" );
-			$results = array();
-		
-			while ( $row = mysql_fetch_assoc($query) ) {
-				array_push($results, $row);
-			}
+require('JSON.php');
 
-			$data['results'] = $results;
-			$data['ip'] = '';
+$json = new Services_JSON();
 
-			array_push($sets, $data);
-		}
+if ( $db_type == "mysql" ){
+	$db = new PDO("$db_type:host=$server;dbname=$database", $username, $pass);
+} else {
+    $db = new PDO("$db_type:$db_path");
+}
 
-		echo $json->encode($sets);
-	} else {
-		$data = $json->decode(str_replace('\\"', '"', $_REQUEST['data']));
+$id = str_replace(';', "", $_REQUEST['id']);
 
-		if ( $data ) {
-		mysql_query( sprintf("INSERT into runs VALUES(NULL,'%s','%s',NOW(),'%s');",
-			$_SERVER['HTTP_USER_AGENT'], $_SERVER['REMOTE_ADDR'], str_replace(';', "", $_REQUEST['style'])) );
+if ( $id ) {
+	$sets = array();
+	$ids = preg_split('/,/',$id);
 
-		$id = mysql_insert_id();
+	foreach ($ids as $i) {
+		$results = array();
 
-		if ( $id ) {
+    	$query = $db->query( "SELECT * FROM runs WHERE id=$i;" );
+    	$data = $query->fetchAll();
 
-		foreach ($data as $row) {
-			mysql_query( sprintf("INSERT into results VALUES(NULL,'%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s');",
-				$id, $row->collection, $row->version, $row->name, $row->scale, $row->median, $row->min, $row->max, $row->mean, $row->deviation, $row->runs) );
-		}
+    	foreach ($db->query( "SELECT * FROM results WHERE runid=$i;" ) as $row) {
+    		array_push($results, $row);
+    	}
 
-		echo $id;
-		}
-		}
+    	$data[0]['results'] = $results;
+		$data[0]['ip'] = '';
+		array_push($sets, $data[0]);
 	}
+	echo $json->encode($sets);
+} else {
+	$data = $json->decode(str_replace('\\"', '"', $_REQUEST['data']));
+	if ( $data ) {
+
+		if ( $db_type == "mysql" ){
+			$now = "NOW()";
+		} else {
+			$now = "date('now')";
+		}
+
+		$db->query( sprintf("INSERT into runs VALUES(NULL,'%s','%s',$now,'%s');",
+				$_SERVER['HTTP_USER_AGENT'],
+				$_SERVER['REMOTE_ADDR'], 
+				str_replace(';', "", $_REQUEST['style'])) );
+
+		$id = $db->lastInsertId();
+	} 
+		
+	if ( $id ) {
+		foreach ($data as $row) {
+			$db->query( sprintf("INSERT into results VALUES(NULL,'%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s');", 
+				$id, 
+				$row->collection,
+				$row->version,
+				$row->name,
+				$row->scale,
+				$row->median,
+				$row->min,
+				$row->max,
+				$row->mean,
+				$row->deviation,
+				$row->runs) );
+			}
+	echo $id;
+	}
+}
+$db = null;
 ?>
